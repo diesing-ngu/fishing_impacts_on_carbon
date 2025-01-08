@@ -18,6 +18,16 @@ p_load(here,
 ```
 
 
+## Create directories
+
+```{r create_dirs}
+dir.create(here("analysis", "data", "raw"), recursive = TRUE)
+dir.create(here("analysis", "data", "interim"), recursive = TRUE)
+dir.create(here("analysis", "data", "final"), recursive = TRUE)
+dir.create(here("analysis", "figures"))
+```
+
+
 ## Load required data
 
 TOC data are loaded as weight-% and converted to a dimensionless fraction to simplify equations. Dry bulk density data are loaded as g per cm3 and converted to kg per m3 for the same reason.
