@@ -22,6 +22,16 @@ p_load(here,
 ```
 
 
+## Create directories
+
+```{r create_dirs}
+dir.create(here("toc_model", "data", "raw"))
+dir.create(here("toc_model", "data", "interim"))
+dir.create(here("toc_model", "data", "final"))
+dir.create(here("toc_model", "figures"))
+```
+
+
 ## Define projection and resolution
 
 ```{r projection}
@@ -46,7 +56,7 @@ file.remove(here("toc_model", "data", "raw", "TOC_input.zip"))
 The area of interest is defined by the predicted substrate types. Rocks and boulders (50) define areas outside the AoI.
 
 ```{r aoi}
-AoI <- rast(here("cri_model", "data", "raw", "GrainSizeReg_folk8_classes_2023-06-28.tif"))
+AoI <- rast(here("toc_model", "data", "raw", "GrainSizeReg_folk8_classes_2023-06-28.tif"))
 AoI[AoI == 11] <- 1
 AoI[AoI == 12] <- 1
 AoI[AoI == 13] <- 1
