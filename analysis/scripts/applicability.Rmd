@@ -41,7 +41,7 @@ unfished <- rast(here("analysis", "data", "final", "unfished_areas.tif"))
 unfished <- as.polygons(unfished)
 unfished <- project(unfished, env_vars)
 
-studies <- read.csv(here("analysis", "data", "raw", "fishing_impact_studies.csv"))
+studies <- read.csv(here("analysis", "data", "raw", "Table1", "fishing_impact_studies.csv"))
 studies <- st_as_sf(studies, coords = c("Longitude_study", "Latitude_study"))
 st_crs(studies) <- "EPSG:4326"
 ```
