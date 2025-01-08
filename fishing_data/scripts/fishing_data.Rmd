@@ -17,6 +17,15 @@ p_load(here,
 ```
 
 
+## Create directories
+
+```{r create_dirs}
+dir.create(here("fishing_data", "data", "raw"), recursive = TRUE)
+dir.create(here("fishing_data", "data", "interim"), recursive = TRUE)
+dir.create(here("fishing_data", "data", "final"), recursive = TRUE)
+```
+
+
 ## Define variables
 
 Available gear types: Beam, Dredge, Otter and Seine. Dredge is not included in this analysis as there is no footprint in Norwegian waters.
