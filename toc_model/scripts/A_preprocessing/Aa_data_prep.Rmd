@@ -25,9 +25,9 @@ p_load(here,
 ## Create directories
 
 ```{r create_dirs}
-dir.create(here("toc_model", "data", "raw"))
-dir.create(here("toc_model", "data", "interim"))
-dir.create(here("toc_model", "data", "final"))
+dir.create(here("toc_model", "data", "raw"), recursive = TRUE)
+dir.create(here("toc_model", "data", "interim"), recursive = TRUE)
+dir.create(here("toc_model", "data", "final"), recursive = TRUE)
 dir.create(here("toc_model", "figures"))
 ```
 
