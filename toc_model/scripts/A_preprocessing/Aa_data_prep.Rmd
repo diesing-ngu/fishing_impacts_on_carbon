@@ -1,0 +1,208 @@
+---
+title: "Total organic carbon - data preparation"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Preparations
+
+## Install packages
+
+```{r packages, message=FALSE, warning=FALSE}
+rm(list=ls())
+
+if(!require("pacman")) install.packages("pacman"); library(pacman)
+p_load(here,
+       sf,
+       spatialEco,
+       dplyr,
+       stars,
+       terra)
+```
+
+
+## Define projection and resolution
+
+```{r projection}
+crs <- "+proj=laea +lat_0=90 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+res <- 4000
+```
+
+
+## Download data from Zenodo
+
+These data are the same as those used to predict TOC content in the upper ten cm of seafloor sediment in Diesing, M., Paradis, S., Jensen, H. et al. Glacial troughs as centres of organic carbon accumulation on the Norwegian continental margin. Commun. Earth Environ. 5, 327 (2024). https://doi.org/10.1038/s43247-024-01502-8
+
+```{r download}
+download.file(url = "https://zenodo.org/records/10058434/files/OrganicCarbonContent_input.zip", destfile = here("toc_model", "data", "raw", "TOC_input.zip"))
+unzip(zipfile = here("toc_model", "data", "raw", "TOC_input.zip"), exdir = here("toc_model", "data", "raw"))
+file.remove(here("toc_model", "data", "raw", "TOC_input.zip"))
+```
+
+
+## Define Area of Interest (AoI)
+
+The area of interest is defined by the predicted substrate types. Rocks and boulders (50) define areas outside the AoI.
+
+```{r aoi}
+AoI <- rast(here("cri_model", "data", "raw", "GrainSizeReg_folk8_classes_2023-06-28.tif"))
+AoI[AoI == 11] <- 1
+AoI[AoI == 12] <- 1
+AoI[AoI == 13] <- 1
+AoI[AoI == 20] <- 1
+AoI[AoI == 30] <- 1
+AoI[AoI == 40] <- 1
+AoI[AoI == 50] <- NA
+AoI[AoI == 60] <- 1
+
+AoI <- as.polygons(AoI, dissolve = TRUE)
+```
+
+
+# Predictor variables
+
+Potentially relevant predictor variables are loaded and a raster stack is created.
+
+```{r load_predictors}
+predictors <- rast(here("toc_model", "data", "raw", "predictors_ngb.tif"))
+mud <- extend(rast(here("toc_model", "data", "raw", "mud_2023-06-30.tif")), predictors)
+predictors <- c(predictors, mud)
+rm(mud)
+names(predictors)[38] <- "MUD"
+```
+
+
+## Ensure uniform projection
+
+Check if AoI and predictors have the defined projection. Re-project if this is not the case.
+
+```{r uniform_proj}
+if (st_crs(AoI)$proj4string != crs) {
+  AoI <- st_transform(AoI, crs)
+}
+
+if (crs(predictors) != crs) {
+  predictors <- project(predictors, crs, res = res)
+}
+```
+
+
+## Crop predictors to AoI
+
+```{r crop_predictors}
+predictors <- crop(mask(predictors, AoI, touches = FALSE), AoI)
+plot(predictors)
+```
+
+
+## Create a fishnet based on predictor raster
+
+A spatial polygons file is created. It consists of one square for every grid cell. It will be used later in the process to create centroids which hold the mean value of the measurements.
+
+```{r fishnet}
+min_ext <- sum(predictors)
+min_ext[min_ext == 0] <- NA
+fishnet <- st_as_sf(stars::st_as_stars(min_ext), as_points = FALSE, merge = FALSE)
+fishnet$ID <- 1:nrow(fishnet)
+```
+
+
+# Response variable
+
+## Load response
+
+```{r load_response}
+OC_data <- read.csv(here("toc_model", "data", "raw", "mosaic_2023-04-21.csv"), header = TRUE, sep = ",")
+summary(OC_data)
+
+OC <- OC_data[,c(1,2,3,4,8,9,10,11)] #Reduce to required columns
+
+names(OC)[7] <- "TOC"
+names(OC)[8] <- "doi"
+
+OC <- subset(OC, core_id != 4402) # Removal of a suspicious station
+OC <- na.omit(OC) # Removes rows with NAs
+OC <- subset(OC, replicate == 1) # Removes replicates
+
+# Convert to sf
+OC <- st_as_sf(OC, coords = c("longitude", "latitude"), crs = "+proj=longlat +datum=WGS84 +no_defs")
+
+summary(OC)
+```
+
+
+## Ensure uniform projection
+
+Check if the response variable has the defined projection. Re-project if this is not the case.
+
+```{r uniform_proj_CRI}
+if (st_crs(OC)$proj4string != crs) {
+  OC <- st_transform(OC, crs)
+}
+```
+
+
+## Sample depth intervals
+
+Define breaks in sample depth to create depth intervals. Note that depth is given in cm and as a positive number here.
+
+Surface (sf): 0 - 2 cm
+Subsurface (ss): 2 - 5 cm
+
+```{r depth_intervals}
+brks <- c(0, 2, 5)
+OC_sf <- subset(OC, sample_depth_average_cm >= brks[1] & sample_depth_average_cm < brks[2])
+OC_ss <- subset(OC, sample_depth_average_cm >= brks[2] & sample_depth_average_cm < brks[3])
+```
+
+
+## Centroids
+
+Centroids are calculated to average all measurements within one grid cell.
+
+```{r centroids_surface, warning=FALSE}
+OC_centroids <- st_join(fishnet, OC_sf)
+OC_centroids <- na.omit(OC_centroids)
+OC_centroids <- OC_centroids %>% group_by(ID) %>% summarize(TOC = mean(TOC, na.rm = TRUE))
+OC_sf <- st_centroid(OC_centroids)
+
+OC_centroids <- st_join(fishnet, OC_ss)
+OC_centroids <- na.omit(OC_centroids)
+OC_centroids <- OC_centroids %>% group_by(ID) %>% summarize(TOC = mean(TOC, na.rm = TRUE))
+OC_ss <- st_centroid(OC_centroids)
+
+plot(predictors$BATH)
+plot(OC_sf["TOC"], pch = 20, col = "black", cex = 0.5, add = TRUE)
+plot(OC_ss["TOC"], pch = 20, col = "red", cex = 0.5, add = TRUE)
+```
+
+
+## Create a regression matrix
+
+```{r regression_matrix}
+rm_oc_sf <- as.data.frame(terra::extract(predictors, OC_sf, bind = TRUE))
+rm_oc_sf <- rm_oc_sf[-1] #removes first column (ID)
+rm_oc_sf <- na.omit(rm_oc_sf) #removes rows with NAs
+summary(rm_oc_sf)
+
+rm_oc_ss <- as.data.frame(terra::extract(predictors, OC_ss, bind = TRUE))
+rm_oc_ss <- rm_oc_ss[-1] #removes first column (ID)
+rm_oc_ss <- na.omit(rm_oc_ss) #removes rows with NAs
+summary(rm_oc_ss)
+```
+
+
+# Save files for further use
+
+```{r save_files}
+writeRaster(predictors, here("toc_model", "data", "interim", "predictors.tif"), overwrite = TRUE)
+writeVector(AoI, here("toc_model", "data", "interim", "AoI.shp"), overwrite = TRUE)
+write_sf(OC_sf, dsn = here("toc_model", "data", "interim"), layer = "OC_sf", driver = "ESRI Shapefile")
+write_sf(OC_ss, dsn = here("toc_model", "data", "interim"), layer = "OC_ss", driver = "ESRI Shapefile")
+write.csv(rm_oc_sf, here("toc_model", "data", "interim", "rm_oc_sf.csv"), quote = FALSE, row.names = FALSE)
+write.csv(rm_oc_ss, here("toc_model", "data", "interim", "rm_oc_ss.csv"), quote = FALSE, row.names = FALSE)
+
+file.remove(here("toc_model", "data", "raw", "predictors_ngb.tif"))
+```
+

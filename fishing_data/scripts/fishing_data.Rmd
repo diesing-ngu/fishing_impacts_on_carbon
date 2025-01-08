@@ -1,0 +1,182 @@
+---
+title: "Fishing data"
+output: html_notebook
+---
+
+# Preparations
+
+## Install packages
+
+```{r packages, message=FALSE, warning=FALSE}
+rm(list=ls())
+
+if(!require("pacman")) install.packages("pacman"); library(pacman)
+p_load(here,
+       sf,
+       terra)
+```
+
+
+## Define variables
+
+Available gear types: Beam, Dredge, Otter and Seine. Dredge is not included in this analysis as there is no footprint in Norwegian waters.
+Years: 2009 to 2020
+Penetration depths: sar (0 - 2 cm) and subsar (2 - 5 cm). The analysis is only looking at surface SAR.
+
+```{r variables}
+gear <- c("Beam", "Otter", "Seine")
+year <- c(2009:2020)
+var <- "sar"
+```
+
+
+
+## Download data from figshare
+
+ICES (2021). Data for OSPAR request on the production of spatial data layers of fishing intensity/pressure. Data Outputs. Dataset. https://doi.org/10.17895/ices.data.8294
+Download the data and save it in fishing_data/data/raw.
+
+```{r download}
+unzip(zipfile = here("fishing_data", "data", "raw", "ICES.2021.OSPAR_production_of_spatial_fishing_pressure_data_layers.zip"), files = "shapefiles.zip", exdir = here("fishing_data", "data", "raw"))
+
+# get names of files to unzip
+files <- unzip(zipfile = here("fishing_data", "data", "raw", "shapefiles.zip"), list = TRUE)
+files <- files[,-c(2,3)]
+files <- subset(files, grepl(gear[1], files) | grepl(gear[2], files) | grepl(gear[3], files))
+
+unzip(zipfile = here("fishing_data", "data", "raw", "shapefiles.zip"), files = files, exdir = here("fishing_data", "data", "raw"))
+
+file.remove(here("fishing_data", "data", "raw", "shapefiles.zip"))
+file.remove(here("fishing_data", "data", "raw", "ICES.2021.OSPAR_production_of_spatial_fishing_pressure_data_layers.zip"))
+```
+
+
+## Create templates
+
+```{r templates}
+t_r <- rast(nrows = 535, ncols = 1100, xmin = -15, xmax = 40, ymin = 55, ymax = 81.75, crs = "EPSG:4326", vals = 1)
+t_v <- st_as_sf(as.polygons(t_r, trunc = FALSE, dissolve = FALSE))
+```
+
+
+# Create raster data from shapefiles
+
+This step is time-consuming.
+
+```{r create_rasters}
+for (i in gear) {
+  for (j in year) {
+    f <- read_sf(paste0(here("fishing_data", "data", "raw"), "/", i, "-", j, ".shp"))
+    head(f)
+    
+    f <- centroids(vect(f), inside = TRUE)
+    
+    join <- st_join(t_v, st_as_sf(f))
+    r <- rasterize(vect(join), t_r, field = var)
+    
+    writeRaster(r, paste0(here("fishing_data", "data", "interim"), "/", var, "_", i, "_", j, ".tif"), overwrite = TRUE)
+  }
+}
+```
+
+
+# Calculate statistics
+
+## Beam trawls
+
+### Surface SAR
+
+```{r sar_beam}
+sar_Beam_2009_2020 <- rast()
+
+sar_Beam <- rast(list.files(path = here("fishing_data", "data", "interim"), pattern = 'sar_Beam', full.names = TRUE))
+
+#assign NA values to 0
+sar_Beam[is.na(sar_Beam)] <- 0
+
+#assign values of -9 to NA
+sar_Beam[sar_Beam == -9] <- NA
+
+#calculate annual statistics
+sar_Beam_2009_2020$SARmin <- min(sar_Beam, na.rm = TRUE)
+sar_Beam_2009_2020$SARmean <- mean(sar_Beam, na.rm = TRUE)
+sar_Beam_2009_2020$SARmax <- max(sar_Beam, na.rm = TRUE)
+sar_Beam_2009_2020$SARsum <- sum(sar_Beam, na.rm = TRUE)
+sar_Beam_2009_2020$SARrange <- range(sar_Beam, na.rm = TRUE)
+
+plot(sar_Beam_2009_2020)
+```
+
+
+## Otter trawls
+
+### Surface SAR
+
+```{r sar_otter}
+sar_Otter_2009_2020 <- rast()
+
+sar_Otter <- rast(list.files(path = here("fishing_data", "data", "interim"), pattern = 'sar_Otter', full.names = TRUE))
+
+#assign NA values to 0
+sar_Otter[is.na(sar_Otter)] <- 0
+
+#assign values of -9 to NA
+sar_Otter[sar_Otter == -9] <- NA
+
+#calculate annual statistics
+sar_Otter_2009_2020$SARmin <- min(sar_Otter, na.rm = TRUE)
+sar_Otter_2009_2020$SARmean <- mean(sar_Otter, na.rm = TRUE)
+sar_Otter_2009_2020$SARmax <- max(sar_Otter, na.rm = TRUE)
+sar_Otter_2009_2020$SARsum <- sum(sar_Otter, na.rm = TRUE)
+sar_Otter_2009_2020$SARrange <- range(sar_Otter, na.rm = TRUE)
+
+plot(sar_Otter_2009_2020)
+```
+
+
+## Seines
+
+### Surface SAR
+
+```{r sar_seines}
+sar_Seine_2009_2020 <- rast()
+
+sar_Seine <- rast(list.files(path = here("fishing_data", "data", "interim"), pattern = 'sar_Seine', full.names = TRUE))
+
+#assign NA values to 0
+sar_Seine[is.na(sar_Seine)] <- 0
+
+#assign values of -9 to NA
+sar_Seine[sar_Seine == -9] <- NA
+
+#calculate annual statistics
+sar_Seine_2009_2020$SARmin <- min(sar_Seine, na.rm = TRUE)
+sar_Seine_2009_2020$SARmean <- mean(sar_Seine, na.rm = TRUE)
+sar_Seine_2009_2020$SARmax <- max(sar_Seine, na.rm = TRUE)
+sar_Seine_2009_2020$SARsum <- sum(sar_Seine, na.rm = TRUE)
+sar_Seine_2009_2020$SARrange <- range(sar_Seine, na.rm = TRUE)
+
+plot(sar_Seine_2009_2020)
+```
+
+
+## Total
+
+### Surface SAR
+
+```{r sar_total}
+sar_total_2009_2020 <- sar_Beam_2009_2020 + sar_Otter_2009_2020 + sar_Seine_2009_2020
+```
+
+
+# Output raster
+
+```{r write_raster}
+writeRaster(sar_Beam_2009_2020$SARmean, here("fishing_data", "data", "final", paste0(var, "_mean_Beam_2009to2020.tif")), overwrite = TRUE)
+writeRaster(sar_Otter_2009_2020$SARmean, here("fishing_data", "data", "final", paste0(var, "_mean_Otter_2009to2020.tif")), overwrite = TRUE)
+writeRaster(sar_Seine_2009_2020$SARmean, here("fishing_data", "data", "final", paste0(var, "_mean_Seine_2009to2020.tif")), overwrite = TRUE)
+writeRaster(sar_total_2009_2020$SARmean, here("fishing_data", "data", "final", paste0(var, "_mean_total_2009to2020.tif")), overwrite = TRUE)
+```
+
+
+

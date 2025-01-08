@@ -1,0 +1,83 @@
+---
+title: "Total organic carbon - data exploration"
+output: html_notebook
+---
+
+# Preparations
+
+## Install packages
+
+```{r packages, message=FALSE, warning=FALSE}
+rm(list=ls())
+
+if(!require("pacman")) install.packages("pacman"); library(pacman)
+p_load(here, 
+       CAST,
+       corrplot,
+       ggplot2)
+```
+
+
+## Load required data
+
+```{r load_data}
+rm_oc_sf <- read.csv(here("toc_model", "data", "interim", "rm_oc_sf.csv"))
+rm_oc_ss <- read.csv(here("toc_model", "data", "interim", "rm_oc_ss.csv"))
+predictors <- rast(here("toc_model", "data", "interim", "predictors.tif"))
+```
+
+
+# Data exploration
+
+## Histogram of organic carbon content (weight-%)
+
+```{r histogram_oc_stock, message=FALSE}
+hist(rm_oc_sf$TOC, breaks = 28, main ="", xlab = "Surface TOC (weight-%)")
+hist(rm_oc_ss$TOC, breaks = 28, main ="", xlab = "Subsurface TOC (weight-%)")
+
+jpeg(filename = here("toc_model", "figures", "TOC_sf_histogram.jpg"), width = 15, height = 10, units = "cm", res = 300)
+hist(rm_oc_sf$TOC, breaks = 28, main ="", xlab = "Surface TOC (weight-%)")
+dev.off()
+
+jpeg(filename = here("toc_model", "figures", "TOC_ss_histogram.jpg"), width = 15, height = 10, units = "cm", res = 300)
+hist(rm_oc_ss$TOC, breaks = 28, main ="", xlab = "Subsurface TOC (weight-%)")
+dev.off()
+```
+
+
+## Correlation plot
+
+```{r corr_plot}
+corrplot.mixed(cor(rm_oc_sf[, names(predictors)]), lower.col =  "black", tl.pos = "lt", number.cex = 0.6)
+
+jpeg(filename = here("toc_model", "figures", "correlation_plot_sf.jpg"), width = 30, height = 30, units = "cm", res = 300)
+corrplot.mixed(cor(rm_oc_sf[, names(predictors)]), lower.col =  "black", tl.pos = "lt", number.cex = 0.6)
+dev.off()
+```
+
+
+## Environmental space
+
+A visual check to what extent the samples cover the environmental space. This is useful as legacy data were used and no formal sampling design was applied in the analysis.
+
+* Blue: Samples
+
+* Grey: Environmental data (based on random subsample)
+
+```{r env_space_sf}
+smp <- as.data.frame(spatSample(x = predictors, size = nrow((rm_oc_sf)), method = "random", na.rm = TRUE))
+
+
+for (i in names(predictors)) {
+    
+  print(ggplot() +
+          geom_density(data = rm_oc_sf, aes(x=rm_oc_sf[,i]),colour="cornflowerblue",fill="cornflowerblue", alpha=0.1,linewidth=1) +
+          geom_density(data = smp, aes(x=smp[,i]), colour="grey",fill="grey", alpha=0.1, linewidth=1) +
+          scale_x_continuous(name = names(rm_oc_sf[i])))
+        
+}
+```
+
+
+
+

@@ -1,0 +1,210 @@
+---
+title: "Dry bulk density - data preparation"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Preparations
+
+## Install packages
+
+```{r packages, message=FALSE, warning=FALSE}
+rm(list=ls())
+
+if(!require("pacman")) install.packages("pacman"); library(pacman)
+p_load(here,
+       sf,
+       spatialEco,
+       dplyr,
+       stars,
+       terra)
+```
+
+
+## Define projection and resolution
+
+```{r projection}
+crs <- "+proj=laea +lat_0=90 +lon_0=0 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+res <- 4000
+```
+
+
+## Download data from Zenodo
+
+These data are the same as those used to predict dry bulk density in the upper ten cm of seafloor sediment in Diesing, M., Paradis, S., Jensen, H. et al. Glacial troughs as centres of organic carbon accumulation on the Norwegian continental margin. Commun. Earth Environ. 5, 327 (2024). https://doi.org/10.1038/s43247-024-01502-8
+
+```{r download}
+download.file(url = "https://zenodo.org/records/10057726/files/DryBulkDensity_input.zip", destfile = here("dbd_model", "data", "raw", "DBD_input.zip"))
+unzip(zipfile = here("dbd_model", "data", "raw", "DBD_input.zip"), exdir = here("dbd_model", "data", "raw"))
+file.remove(here("dbd_model", "data", "raw", "DBD_input.zip"))
+```
+
+
+## Define Area of Interest (AoI)
+
+The area of interest is defined by the predicted substrate types. Rocks and boulders (50) define areas outside the AoI.
+
+```{r aoi}
+AoI <- rast(here("cri_model", "data", "raw", "GrainSizeReg_folk8_classes_2023-06-28.tif"))
+AoI[AoI == 11] <- 1
+AoI[AoI == 12] <- 1
+AoI[AoI == 13] <- 1
+AoI[AoI == 20] <- 1
+AoI[AoI == 30] <- 1
+AoI[AoI == 40] <- 1
+AoI[AoI == 50] <- NA
+AoI[AoI == 60] <- 1
+
+AoI <- as.polygons(AoI, dissolve = TRUE)
+```
+
+
+# Predictor variables
+
+Potentially relevant predictor variables are loaded and a raster stack is created.
+
+```{r load_predictors}
+predictors <- rast(here("dbd_model", "data", "raw", "predictors_ngb.tif"))
+grainsize_prob <- extend(rast(here("dbd_model", "data", "raw", "GrainSizeReg_folk8_probabilities_2023-06-28.tif")), predictors)
+predictors <- c(predictors, grainsize_prob)
+names(predictors)[38] <- "M"
+names(predictors)[39] <- "sM"
+names(predictors)[40] <- "mS"
+names(predictors)[41] <- "S"
+names(predictors)[42] <- "CS"
+names(predictors)[43] <- "Mx"
+names(predictors)[44] <- "R"
+names(predictors)[45] <- "Mos"
+rm(grainsize_prob)
+```
+
+
+## Ensure uniform projection
+
+Check if AoI and predictors have the defined projection. Re-project if this is not the case.
+
+```{r uniform_proj}
+if (st_crs(AoI)$proj4string != crs) {
+  AoI <- st_transform(AoI, crs)
+}
+
+if (crs(predictors) != crs) {
+  predictors <- project(predictors, crs, res = res)
+}
+```
+
+
+## Crop predictors to AoI
+
+```{r crop_predictors}
+predictors <- crop(mask(predictors, AoI, touches = FALSE), AoI)
+plot(predictors)
+```
+
+
+## Create a fishnet based on predictor raster
+
+A spatial polygons file is created. It consists of one square for every grid cell. It will be used later in the process to create centroids which hold the mean value of the measurements.
+
+```{r fishnet}
+min_ext <- sum(predictors)
+min_ext[min_ext == 0] <- NA
+fishnet <- st_as_sf(stars::st_as_stars(min_ext), as_points = FALSE, merge = FALSE)
+fishnet$ID <- 1:nrow(fishnet)
+```
+
+
+# Response variable
+
+## Load response
+
+```{r load_response}
+DBD_data <- read.csv(here("dbd_model", "data", "raw", "DBD_2023-07-21.csv"), header = TRUE, sep = ",")
+summary(DBD_data)
+
+names(DBD_data)[5] <- "DBD"
+
+DBD_data <- subset(DBD_data, Event.Label != "R1689") # Removal of a suspicious station
+
+# Convert to sf
+DBD <- st_as_sf(DBD_data, coords = c("Longitude", "Latitude"), crs = "+proj=longlat +datum=WGS84 +no_defs")
+
+summary(DBD)
+```
+
+
+## Ensure uniform projection
+
+Check if the response variable has the defined projection. Re-project if this is not the case.
+
+```{r uniform_proj_CRI}
+if (st_crs(DBD)$proj4string != crs) {
+  DBD <- st_transform(DBD, crs)
+}
+```
+
+
+## Sample depth intervals
+
+Define breaks in sample depth to create depth intervals. Note that depth is given in cm and as a positive number here.
+
+Surface (sf): 0 - 2 cm
+Subsurface (ss): 2 - 5 cm
+
+```{r depth_intervals}
+brks <- c(0, 2, 5)
+DBD_sf <- subset(DBD, Obs_depth_cm>= brks[1] & Obs_depth_cm< brks[2])
+DBD_ss <- subset(DBD, Obs_depth_cm>= brks[2] & Obs_depth_cm< brks[3])
+```
+
+
+## Centroids
+
+Centroids are calculated to average all measurements within one grid cell.
+
+```{r centroids_surface, warning=FALSE}
+DBD_centroids <- st_join(fishnet, DBD_sf)
+DBD_centroids <- na.omit(DBD_centroids)
+DBD_centroids <- DBD_centroids %>% group_by(ID) %>% summarize(DBD = mean(DBD, na.rm = TRUE))
+DBD_sf <- st_centroid(DBD_centroids)
+
+DBD_centroids <- st_join(fishnet, DBD_ss)
+DBD_centroids <- na.omit(DBD_centroids)
+DBD_centroids <- DBD_centroids %>% group_by(ID) %>% summarize(DBD = mean(DBD, na.rm = TRUE))
+DBD_ss <- st_centroid(DBD_centroids)
+
+plot(predictors$BATH)
+plot(DBD_sf["DBD"], pch = 20, col = "black", cex = 0.5, add = TRUE)
+plot(DBD_ss["DBD"], pch = 20, col = "red", cex = 0.5, add = TRUE)
+```
+
+
+## Create a regression matrix
+
+```{r regression_matrix}
+rm_dbd_sf <- as.data.frame(terra::extract(predictors, DBD_sf, bind = TRUE))
+rm_dbd_sf <- rm_dbd_sf[-1] #removes first column (ID)
+rm_dbd_sf <- na.omit(rm_dbd_sf) #removes rows with NAs
+summary(rm_dbd_sf)
+
+rm_dbd_ss <- as.data.frame(terra::extract(predictors, DBD_ss, bind = TRUE))
+rm_dbd_ss <- rm_dbd_ss[-1] #removes first column (ID)
+rm_dbd_ss <- na.omit(rm_dbd_ss) #removes rows with NAs
+summary(rm_dbd_ss)
+```
+
+
+# Save files for further use
+
+```{r save_files}
+writeRaster(predictors, here("dbd_model", "data", "interim", "predictors.tif"), overwrite = TRUE)
+writeVector(AoI, here("dbd_model", "data", "interim", "AoI.shp"), overwrite = TRUE)
+write_sf(DBD_sf, dsn = here("dbd_model", "data", "interim"), layer = "DBD_sf", driver = "ESRI Shapefile")
+write_sf(DBD_ss, dsn = here("dbd_model", "data", "interim"), layer = "DBD_ss", driver = "ESRI Shapefile")
+write.csv(rm_dbd_sf, here("dbd_model", "data", "interim", "rm_dbd_sf.csv"), quote = FALSE, row.names = FALSE)
+write.csv(rm_dbd_ss, here("dbd_model", "data", "interim", "rm_dbd_ss.csv"), quote = FALSE, row.names = FALSE)
+
+file.remove(here("dbd_model", "data", "raw", "predictors_ngb.tif"))
+```
+

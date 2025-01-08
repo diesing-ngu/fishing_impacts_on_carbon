@@ -1,0 +1,104 @@
+---
+title: "Applicability of the results from the meta-analysis to Norway"
+output: html_notebook
+---
+
+
+# Preparations
+
+## Install packages
+
+```{r packages, message=FALSE, warning=FALSE}
+rm(list=ls())
+
+if(!require("pacman")) install.packages("pacman"); library(pacman)
+p_load(here,
+       terra,
+       sf,
+       ggplot2,
+       gridExtra,
+       sdmpredictors)
+```
+
+
+## Load required data
+
+```{r load_data}
+load_layers(layercodes = c("MS_bathy_5m", "BO22_ppmean_ss", "BO22_curvelmean_bdmean"),
+                        equalarea = FALSE, 
+                        rasterstack = FALSE,
+                        datadir = here("analysis", "data", "raw", "BO"))
+
+files <- list.files(here("analysis", "data", "raw", "BO"), pattern = ".zip")
+for (i in files) {
+  unzip(here("analysis", "data", "raw", "BO", i), exdir = here("analysis", "data", "raw", "BO"))
+}
+
+env_vars <- rast(here("analysis", "data", "raw", "BO", list.files(here("analysis", "data", "raw", "BO"), pattern = ".tif")))
+names(env_vars) <- c("Depth (m)", "Current velocity (m/s)", "Primary Productivity (mmol/m3)")
+
+unfished <- rast(here("analysis", "data", "final", "unfished_areas.tif"))
+unfished <- as.polygons(unfished)
+unfished <- project(unfished, env_vars)
+
+studies <- read.csv(here("analysis", "data", "raw", "fishing_impact_studies.csv"))
+studies <- st_as_sf(studies, coords = c("Longitude_study", "Latitude_study"))
+st_crs(studies) <- "EPSG:4326"
+```
+
+
+# Environmental space
+
+A visual check to what extent the environment of the meta-analysis studies is comparable to the Norwegian margin. 
+
+* Blue: Meta-analysis studies
+
+* Grey: Norwegian margin (based on random subsample)
+
+```{r env_space}
+st <- extract(env_vars, studies)
+
+env_vars_nor <- mask(crop(env_vars, unfished), unfished)
+
+norway <- as.data.frame(spatSample(x = env_vars_nor, size = 1000, method = "random", na.rm = TRUE))
+
+for (i in names(env_vars)) {
+    
+  print(ggplot() +
+          geom_density(data = st, aes(x=st[,i]),colour="cornflowerblue",fill="cornflowerblue", alpha=0.1,linewidth=1) +
+          geom_density(data = norway, aes(x=norway[,i]), colour="grey",fill="grey", alpha=0.1, linewidth=1) +
+          scale_x_continuous(name = names(st[i])) +
+          theme_minimal(base_size = 14, base_line_size = 1))
+        
+}
+```
+
+
+# Figure for publication
+
+```{r figure}
+p1 <- ggplot() +
+          geom_density(data = st, aes(x=st[,2]),colour="cornflowerblue",fill="cornflowerblue", alpha=0.1,linewidth=1) +
+          geom_density(data = norway, aes(x=norway[,1]), colour="grey",fill="grey", alpha=0.1, linewidth=1) +
+          scale_x_continuous(name = names(st[2])) +
+          theme_minimal(base_size = 14, base_line_size = 1)
+
+p2 <- ggplot() +
+          geom_density(data = st, aes(x=st[,3]),colour="cornflowerblue",fill="cornflowerblue", alpha=0.1,linewidth=1) +
+          geom_density(data = norway, aes(x=norway[,2]), colour="grey",fill="grey", alpha=0.1, linewidth=1) +
+          scale_x_continuous(name = expression(Current~velocity~(m~s^{-1}))) +
+          theme_minimal(base_size = 14, base_line_size = 1)
+
+p3 <- ggplot() +
+          geom_density(data = st, aes(x=st[,4]),colour="cornflowerblue",fill="cornflowerblue", alpha=0.1,linewidth=1) +
+          geom_density(data = norway, aes(x=norway[,3]), colour="grey",fill="grey", alpha=0.1, linewidth=1) +
+          scale_x_continuous(name = expression(Primary~productivity~(mmol~m^{-3}))) +
+          theme_minimal(base_size = 14, base_line_size = 1)
+
+jpeg(here("analysis", "figures", "environment.jpg"), width = 17, height = 24, units = "cm", res = 300)
+grid.arrange(p1, p2, p3, ncol = 1)
+dev.off()
+```
+
+
+

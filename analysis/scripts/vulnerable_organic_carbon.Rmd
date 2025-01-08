@@ -1,0 +1,403 @@
+---
+title: "Vulnerable organic carbon"
+output: html_notebook
+---
+
+# Preparations
+
+## Install packages
+
+```{r packages, message=FALSE, warning=FALSE}
+rm(list=ls())
+
+if(!require("pacman")) install.packages("pacman"); library(pacman)
+p_load(here,
+       terra,
+       dplyr,
+       ggplot2)
+```
+
+
+## Load required data
+
+TOC data are loaded as weight-% and converted to a dimensionless fraction to simplify equations. Dry bulk density data are loaded as g per cm3 and converted to kg per m3 for the same reason.
+
+```{r load_data}
+# Organic carbon content in the surface layer
+date <- list.files(path = here("toc_model", "data", "final"), pattern = "OC_sf_median_")
+date <- sub(".*?OC_sf_median_(.*?).tif*", "\\1", date)
+date <- as.Date(date)
+date <- max(date)
+TOC_sf <- rast(here("toc_model", "data", "final", paste0("OC_sf_median_", date, ".tif")))
+TOC_sf <- TOC_sf/100
+
+# Dry bulk density in the surface layer
+date <- list.files(path = here("dbd_model", "data", "final"), pattern = "DBD_sf_median_")
+date <- sub(".*?DBD_sf_median_(.*?).tif*", "\\1", date)
+date <- as.Date(date)
+date <- max(date)
+DBD_sf <- rast(here("dbd_model", "data", "final", paste0("DBD_sf_median_", date, ".tif")))
+DBD_sf <- DBD_sf * 1000
+
+# Surface swept area ratio
+SAR_sf_beam <- rast(here("fishing_data", "data", "final", "sar_mean_Beam_2009to2020.tif"))
+SAR_sf_otter <- rast(here("fishing_data", "data", "final", "sar_mean_Otter_2009to2020.tif"))
+SAR_sf_seine <- rast(here("fishing_data", "data", "final", "sar_mean_Seine_2009to2020.tif"))
+SAR_sf_total <- rast(here("fishing_data", "data", "final", "sar_mean_total_2009to2020.tif"))
+```
+
+
+# Organic carbon stock (kg/m2) of the surface layer (0 - 2 cm)
+
+```{r oc_stocks}
+ocs_sf <- DBD_sf * TOC_sf * 0.02
+plot(ocs_sf)
+```
+
+
+## Calculate organic carbon pool (Tg)
+
+```{r calculate_oc_pool}
+A <- res(TOC_sf)[1]*res(TOC_sf)[2] #Area of one pixel
+area_total <- as.numeric(global(ocs_sf*0+1, sum, na.rm = TRUE)*A/1000000)
+ocp_sf <- as.numeric(global(ocs_sf, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+# Swept volume ratio
+
+## Gear penetration depths (cm)
+
+Average gear penetration depths are taken from Hiddink et al. (2017)[https://doi.org/10.1073/pnas.1618858114] for beam and otter trawlers. The value for seines is a conservative estimate by Epstein & Roberts (2022)[https://doi.org/10.1371/journal.pclm.0000059] based on Eigaard et al. (2016)[https://doi.org/10.1093/icesjms/fsv099].
+
+```{r penetration_depth}
+d_beam <- 2.72
+d_otter <- 2.44
+d_seine <- 0.5
+```
+
+
+## Calculate swept volume ratios (SVR)
+
+```{r calculate_svr}
+SVR_sf_beam <- SAR_sf_beam * ifelse(d_beam <= 2, d_beam/2, 1)
+SVR_sf_otter <- SAR_sf_otter * ifelse(d_otter <= 2, d_otter/2, 1)
+SVR_sf_seine <- SAR_sf_seine * ifelse(d_seine <= 2, d_seine/2, 1)
+
+SVR_sf <- SVR_sf_beam + SVR_sf_otter + SVR_sf_seine
+```
+
+
+## Project SVR data
+
+```{r project_svr}
+SVR_sf_pr <- project(SVR_sf, TOC_sf)
+```
+
+
+# Annual cumulative disturbance of organic carbon stocks
+
+## Fished areas
+
+Create a mask of fished areas, i.e., all grid cells that have a SVR > 0. This mask is for display purposes and won't be used in the analysis.
+
+```{r fished_areas}
+fished <- SVR_sf
+fished[fished == 0] <- NA
+fished[fished > 0] <- 1
+fished <- project(fished, TOC_sf, method = "near")
+
+AoI <- ocs_sf
+AoI[AoI != 0] <- 1
+fished <- fished * AoI
+plot(fished)
+```
+
+
+## Mean annual disturbance of organic carbon stocks (kg/m2)
+
+This is a value of annual cumulative disturbance of organic carbon stocks following Epstein & Roberts (2022)[https://doi.org/10.1371/journal.pclm.0000059]. 
+
+```{r disturbed_oc}
+ocs_sf_dist <- ocs_sf * SVR_sf_pr
+
+plot(ocs_sf_dist)
+```
+
+
+## Calculate disturbed organic carbon pool (Tg)
+
+```{r calculate_disturbed_oc_pool}
+ocp_sf_dist <- as.numeric(global(ocs_sf_dist, sum, na.rm = TRUE)*A/1000000000)
+```
+
+Note that disturbed and undisturbed organic carbon (below) pools do not sum up to the organic carbon pool.
+
+
+# Undisturbed organic carbon
+
+## Unfished areas
+
+Create a mask of unfished areas, i.e., all grid cells that have a SVR = 0.
+
+```{r unfished_areas}
+unfished <- SVR_sf
+unfished[unfished != 0] <- NA
+unfished[unfished == 0] <- 1
+unfished <- project(unfished, TOC_sf, method = "near")
+area_unfished <- as.numeric(global(unfished*AoI, sum, na.rm = TRUE)*A/1000000)
+```
+
+
+## Undisturbed organic carbon stock (kg/m2)
+
+```{r undisturbed_oc}
+ocs_sf_undist <- ocs_sf * unfished
+
+plot(ocs_sf_undist)
+```
+
+
+## Calculate undisturbed organic carbon pool (Tg)
+
+```{r calculate_undisturbed_oc_pool}
+ocp_sf_undist <- as.numeric(global(ocs_sf_undist, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+# Vulnerable organic carbon stocks
+
+The organic carbon stock is the product of total organic carbon content $G$ (dimensionless fraction) , dry bulk density $\rho_d$ (kg/m3) and sediment thickness $d$ (m):
+
+$OCS = G*\rho_d*d$
+
+$\rho_G = G*\rho_d$
+
+$OCS = \rho_G*d$
+
+The organic carbon stock post disturbance $OCSpd$ equates to:
+
+$OCSpd = (\rho_G+\delta \rho_G)*(d+\delta d)$
+
+We can substitute 
+
+$\delta \rho_G = \rho_G*RR_\rho$
+
+with $RR_\rho$ being the effect size (response ratio) of organic carbon density based on a meta-analysis.
+
+$OCSpd = (\rho_G+\rho_G*RR_\rho)*(d+\delta d)$
+
+$OCSpd = \rho_G(1+RR_\rho)*(d+\delta d)$
+
+
+## Meta-analysis results
+
+Analysis as in Tiano et al. (2024)[https://doi.org/10.1111/faf.12855] but restricted to surface layer and acute impacts (first week after fishing event). Organic carbon content and dry bulk density are related to each other, although the exact form of the relationship is site-dependent. Both variables do not vary independently from each other. Therefore, only studies that report TOC content and either dry bulk density, porosity or absolute water content are considered. The latter two are included as dry bulk density can be calculated from porosity and water content (Flemming & Delafontaine, 2000)[https://doi.org/10.1016/S0278-4343(00)00018-2] with a high degree of accuracy. Estimates are reported as log response ratio (lnRR).
+
+```{r meta-analysis_results}
+effect_size <- read.csv(here("analysis", "data", "raw", "OCdens_surface_layer_acute.csv"))
+effect_size
+```
+
+
+## Calculate effect sizes
+
+The effect sizes can be calculated by:
+
+$RR = (e^{lnRR}-1)$
+
+```{r effect_size}
+ocdens_sf_effect_mean <- exp(effect_size[3,2])-1
+ocdens_sf_effect_lower <- exp(effect_size[3,5])-1
+ocdens_sf_effect_upper <- exp(effect_size[3,6])-1
+```
+
+
+## Estimate changes in sediment thickness due to trawl-induced erosion
+
+Changes in sediment thickness can be estimated from the resuspended sediment mass per unit trawled area $m$ (g/m2), the proportion of the sediment that resettles after resuspension $Pcrd$ (dimensionless fraction) and the dry bulk density $\rho_d$:
+
+$\delta d = -m*(1-Pcrd)/\rho_d$
+
+### Estimate resuspended sediment
+
+Based on empirical relationships with silt-clay (mud) content (weight-%) as in Oberle et al. (2016)[http://dx.doi.org/10.1016/j.jmarsys.2015.12.007].
+
+### Get mud content data
+
+```{r mud}
+download.file(url = "https://zenodo.org/records/10057207/files/MudContent_output.zip", destfile = here("analysis", "data", "raw", "Mud.zip"))
+unzip(zipfile = here("analysis", "data", "raw", "Mud.zip"), files = "mud_2023-06-30.tif", exdir = here("analysis", "data", "raw"))
+mud <- rast(here("analysis", "data", "raw", "mud_2023-06-30.tif"))
+file.remove(here("analysis", "data", "raw", "Mud.zip"))
+```
+
+
+### Estimate resuspended sediment
+
+```{r resuspended_sediment}
+m_mean <- 37.31  * mud + 425.37
+m_lower <- 13.45 * mud + 170.96
+m_upper <- 61.69 * mud + 870.04
+```
+
+
+### Calculate sediment thickness changes
+
+The proportion of the sediment that resettles after resuspension $Pcrd$ was taken from Sala et al. (2021).
+
+```{r thickness_change}
+Pcrd <- 0.87
+
+delta_d_mean <- -1 * m_mean/1000 * (1-Pcrd) / DBD_sf
+delta_d_lower <- -1 * m_lower/1000 * (1-Pcrd) / DBD_sf
+delta_d_upper <- -1 * m_upper/1000 * (1-Pcrd) / DBD_sf
+```
+
+
+## Calculate the organic carbon stock post disturbance
+
+```{r post_disturbance_stock}
+ocs_sf_pd_mean <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_mean) * (0.02 + delta_d_mean)
+ocs_sf_pd_lower <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_lower) * (0.02 + delta_d_lower)
+ocs_sf_pd_upper <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_upper) * (0.02 + delta_d_upper)
+```
+
+
+
+## Calculate vulnerable organic carbon (kg/m2)
+
+Vulnerable organic carbon is defined here as the organic carbon that would be lost due to trawling a grid cell once completely and evenly over the full depth of the surface layer (SVR = 1).
+
+```{r vulnerable_oc}
+ocs_sf_vuln_mean <- ocs_sf_undist - ocs_sf_pd_mean
+ocs_sf_vuln_high <- ocs_sf_undist - ocs_sf_pd_lower
+ocs_sf_vuln_low <- ocs_sf_undist - ocs_sf_pd_upper
+
+plot(ocs_sf_vuln_mean)
+plot(ocs_sf_vuln_low)
+plot(ocs_sf_vuln_high)
+```
+
+
+## Calculate vulnerable organic carbon pools (Tg)
+
+```{r calculate_vulnerable_oc_pools}
+ocp_sf_vuln_mean <- as.numeric(global(ocs_sf_vuln_mean, sum, na.rm = TRUE)*A/1000000000)
+ocp_sf_vuln_low <- as.numeric(global(ocs_sf_vuln_low, sum, na.rm = TRUE)*A/1000000000)
+ocp_sf_vuln_high <- as.numeric(global(ocs_sf_vuln_high, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+# Recovery time
+
+## Load organic carbon accumulation rates (g m-2 yr-1)
+
+Download the file OCAR_2024-03-20.tif from https://doi.pangaea.de/10.1594/PANGAEA.965617?format=html#download and store it in analysis/data/raw.
+
+```{r load_ocar}
+ocar <- rast(here("analysis", "data", "raw", "OCAR_2024-03-20.tif"))
+```
+
+
+## Replace zero OC accumulation with a small value
+
+Cells with OCAR = 0 g m-2 yr-1 are replaced with a small value to avoid division by zero.
+
+```{r replace_zeros}
+ocar[ocar == 0] <- 0.001
+```
+
+
+
+## Calculate recovery time
+
+```{r recovery_time}
+ocs_sf_rec_time_mean <- 1000*ocs_sf_vuln_mean/ocar
+ocs_sf_rec_time_low <- 1000*ocs_sf_vuln_low/ocar
+ocs_sf_rec_time_high <- 1000*ocs_sf_vuln_high/ocar
+
+plot(ocs_sf_rec_time_mean)
+plot(ocs_sf_rec_time_low)
+plot(ocs_sf_rec_time_high)
+```
+
+
+## Recovered area over time
+
+The prediction of organic carbon accumulation rates does contain 'holes' where the predictions were outside the area of applicability. These amount to 133,456 km^2, which have to be subtracted from the total unfished area, when calculating the fraction of recovered area.
+
+```{r recovered_area_over_time}
+breaks <- c(0:25)
+ocs_sf_rec_time_mean_cl <- classify(ocs_sf_rec_time_mean, breaks)
+ocs_sf_rec_time_low_cl <- classify(ocs_sf_rec_time_low, breaks)
+ocs_sf_rec_time_high_cl <- classify(ocs_sf_rec_time_high, breaks)
+
+recovery_mean <- freq(ocs_sf_rec_time_mean_cl, bylayer = FALSE)
+recovery_mean$scenario <- "mean"
+recovery_mean$time <- c(1:nrow(recovery_mean))
+recovery_mean$area <- recovery_mean$count * A /1000000
+recovery_mean <- recovery_mean %>% mutate(cum_area = cumsum(area))
+recovery_mean$fraction <- recovery_mean$cum_area/(area_unfished - 133456)
+
+recovery_low <- freq(ocs_sf_rec_time_low_cl, bylayer = FALSE)
+recovery_low$scenario <- "low"
+recovery_low$time <- c(1:nrow(recovery_low))
+recovery_low$area <- recovery_low$count * A /1000000
+recovery_low <- recovery_low %>% mutate(cum_area = cumsum(area))
+recovery_low$fraction <- recovery_low$cum_area/(area_unfished - 133456)
+
+recovery_high <- freq(ocs_sf_rec_time_high_cl, bylayer = FALSE)
+recovery_high$scenario <- "high"
+recovery_high$time <- c(1:nrow(recovery_high))
+recovery_high$area <- recovery_high$count * A /1000000
+recovery_high <- recovery_high %>% mutate(cum_area = cumsum(area))
+recovery_high$fraction <- recovery_high$cum_area/(area_unfished - 133456)
+
+recovery <- rbind(recovery_low, recovery_mean, recovery_high)
+recovery <- recovery[,c("scenario", "time", "fraction")]
+
+recovery[nrow(recovery)+1,] <- list("low", 0, 0)
+recovery[nrow(recovery)+1,] <- list("low", 20, 0.8554000354)
+recovery[nrow(recovery)+1,] <- list("mean", 0, 0)
+recovery[nrow(recovery)+1,] <- list("high", 0, 0)
+```
+
+
+## Create figure
+
+```{r recovery_figure, warning=FALSE}
+p <- ggplot(data = recovery, aes(x = time, y = fraction, color = scenario)) + 
+     geom_line(linewidth = 1.2) +
+     geom_hline(yintercept = 0.8554) +
+     scale_y_continuous(breaks = seq(0, 1, 0.2)) +
+     xlab("Recovery time (yr)") +
+     ylab("Fraction of recovered area (-)") +
+     theme_minimal(base_size = 14, base_line_size = 1)
+p
+
+jpeg(here("analysis", "figures", "recovery.jpg"), width = 31.99, height = 16.01, units = "cm", res = 300)
+p
+dev.off()
+```
+
+
+
+# Output data
+
+```{r write_data}
+writeRaster(SVR_sf_pr*AoI, here("analysis", "data", "final", "SVR.tif"), overwrite = TRUE)
+writeRaster(fished, here("analysis", "data", "final", "fished_areas.tif"), overwrite = TRUE)
+writeRaster(unfished*AoI, here("analysis", "data", "final", "unfished_areas.tif"), overwrite = TRUE)
+writeRaster(ocs_sf, here("analysis", "data", "final", "OC_stock_sf.tif"), overwrite = TRUE)
+writeRaster(ocs_sf_dist, here("analysis", "data", "final", "OC_stock_sf_disturbed.tif"), overwrite = TRUE)
+writeRaster(ocs_sf_undist, here("analysis", "data", "final", "OC_stock_sf_undisturbed.tif"), overwrite = TRUE)
+writeRaster(ocs_sf_vuln_mean, here("analysis", "data", "final", "OC_stock_sf_vulnerable_mean.tif"), overwrite = TRUE)
+writeRaster(ocs_sf_vuln_low, here("analysis", "data", "final", "OC_stock_sf_vulnerable_low.tif"), overwrite = TRUE)
+writeRaster(ocs_sf_vuln_high, here("analysis", "data", "final", "OC_stock_sf_vulnerable_high.tif"), overwrite = TRUE)
+write.csv(recovery, here("analysis", "data", "final", "recovery_times.csv"), row.names = FALSE)
+```
+
+
+
+

@@ -1,0 +1,254 @@
+---
+title: "Short term effects"
+output: html_notebook
+---
+
+# Preparations
+
+## Install packages
+
+```{r packages, message=FALSE, warning=FALSE}
+rm(list=ls())
+
+if(!require("pacman")) install.packages("pacman"); library(pacman)
+p_load(here,
+       terra)
+```
+
+
+## Load required data
+
+TOC data are loaded as weight-% and converted to a dimensionless fraction to simplify equations. Dry bulk density data are loaded as g per cm3 and converted to kg per m3 for the same reason.
+
+```{r load_data}
+# Organic carbon content in the surface layer
+date <- list.files(path = here("toc_model", "data", "final"), pattern = "OC_sf_median_")
+date <- sub(".*?OC_sf_median_(.*?).tif*", "\\1", date)
+date <- as.Date(date)
+date <- max(date)
+TOC_sf <- rast(here("toc_model", "data", "final", paste0("OC_sf_median_", date, ".tif")))
+TOC_sf <- TOC_sf/100
+
+# Dry bulk density in the surface layer
+date <- list.files(path = here("dbd_model", "data", "final"), pattern = "DBD_sf_median_")
+date <- sub(".*?DBD_sf_median_(.*?).tif*", "\\1", date)
+date <- as.Date(date)
+date <- max(date)
+DBD_sf <- rast(here("dbd_model", "data", "final", paste0("DBD_sf_median_", date, ".tif")))
+DBD_sf <- DBD_sf * 1000
+
+# Carbon reactivity index
+date <- list.files(path = here("cri_model", "data", "final"), pattern = "CRI_median_")
+date <- sub(".*?CRI_median_(.*?).tif*", "\\1", date)
+date <- as.Date(date)
+date <- max(date)
+CRI <- rast(here("cri_model", "data", "final", paste0("CRI_median_", date, ".tif")))
+
+# Surface swept area ratio
+SAR_sf_beam <- rast(here("fishing_data", "data", "final", "sar_mean_Beam_2009to2020.tif"))
+SAR_sf_otter <- rast(here("fishing_data", "data", "final", "sar_mean_Otter_2009to2020.tif"))
+SAR_sf_seine <- rast(here("fishing_data", "data", "final", "sar_mean_Seine_2009to2020.tif"))
+```
+
+
+# Labile organic carbon stock (kg/m2) of the surface layer (0 - 2 cm)
+
+```{r loc_stocks}
+locs_sf <- DBD_sf * TOC_sf * (1 - CRI) * 0.02
+plot(locs_sf)
+```
+
+
+## Calculate labile organic carbon pool (Tg)
+
+```{r calculate_loc_pool}
+A <- res(TOC_sf)[1]*res(TOC_sf)[2] #Area of one pixel
+
+locp_sf <- as.numeric(global(locs_sf, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+# Swept volume ratio
+
+## Gear penetration depths (cm)
+
+Average gear penetration depths are taken from Hiddink et al. (2017)[https://doi.org/10.1073/pnas.1618858114] for beam and otter trawlers. The value for seines is a conservative estimate by Epstein & Roberts (2022)[https://doi.org/10.1371/journal.pclm.0000059] based on Eigaard et al. (2016)[https://doi.org/10.1093/icesjms/fsv099].
+
+```{r penetration_depth}
+d_beam <- 2.72
+d_otter <- 2.44
+d_seine <- 0.5
+```
+
+
+## Calculate swept volume ratios (SVR)
+
+```{r calculate_svr}
+SVR_sf_beam <- SAR_sf_beam * ifelse(d_beam <= 2, d_beam/2, 1)
+SVR_sf_otter <- SAR_sf_otter * ifelse(d_otter <= 2, d_otter/2, 1)
+SVR_sf_seine <- SAR_sf_seine * ifelse(d_seine <= 2, d_seine/2, 1)
+
+SVR_sf <- SVR_sf_beam + SVR_sf_otter + SVR_sf_seine
+```
+
+
+## Project SVR data
+
+```{r project_svr}
+SVR_sf_pr <- project(SVR_sf, TOC_sf)
+```
+
+
+# Disturbed labile organic carbon
+
+## Disturbed labile organic carbon stock (kg/m2)
+
+This is a value of annual cumulative disturbance of labile organic carbon stocks following Epstein & Roberts (2022)[https://doi.org/10.1371/journal.pclm.0000059]. 
+Note that disturbed and undisturbed labile organic carbon (below) pools do not sum up to the labile organic carbon pool.
+
+```{r disturbed_loc}
+locs_sf_dist <- locs_sf * SVR_sf_pr
+
+plot(locs_sf_dist)
+```
+
+
+## Calculate disturbed labile organic carbon pool (Tg)
+
+```{r calculate_disturbed_loc_pool}
+locp_sf_dist <- as.numeric(global(locs_sf_dist, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+# Undisturbed labile organic carbon
+
+## Unfished areas
+
+Create a mask of unfished areas, i.e., all grid cells that have a SVR = 0.
+
+```{r unfished_areas}
+unfished <- SVR_sf
+unfished[unfished != 0] <- NA
+unfished[unfished == 0] <- 1
+unfished <- project(unfished, TOC_sf, method = "near")
+```
+
+
+## Undisturbed labile organic carbon stock (kg/m2)
+
+```{r undisturbed_loc}
+locs_sf_undist <- locs_sf * unfished
+
+plot(locs_sf_undist)
+```
+
+
+## Calculate undisturbed labile organic carbon pool (Tg)
+
+```{r calculate_undisturbed_loc_pool}
+locp_sf_undist <- as.numeric(global(locs_sf_undist, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+# Vulnerable labile organic carbon
+
+Chlorophyll-a and phaeopigments have been used as tracers of labile organic carbon (Stephens et al., 1997)[https://doi.org/10.1016/S0016-7037(97)00358-X]. However, chlorophyll-a might be too labile to test differences in organic matter related to trawling (Sañé et al., 2013)[https://doi.org/10.5194/bg-10-8093-2013].
+
+## Meta-analysis results
+
+Analysis as in Tiano et al. (2024)[https://doi.org/10.1111/faf.12855] but restricted to surface layer and acute impacts (first week after fishing event). Does also include additional studies and variables. Estimates are reported as log response ratio (lnRR).
+
+```{r meta-analysis_results}
+effect_size <- read.csv(here("analysis", "data", "raw", "surface_layer.csv"))
+effect_size
+```
+
+
+## Calculate effect sizes
+
+```{r effect_size}
+#Phaeopigments
+phaeo_sf_effect_mean <- exp(effect_size[3,2])-1
+phaeo_sf_effect_lower <- exp(effect_size[3,5])-1
+phaeo_sf_effect_upper <- exp(effect_size[3,6])-1
+
+#Dry bulk density
+dbd_sf_effect_mean <- exp(effect_size[5,2])-1
+dbd_sf_effect_lower <- exp(effect_size[5,5])-1
+dbd_sf_effect_upper <- exp(effect_size[5,6])-1
+```
+
+
+## Calculate vulnerable labile organic carbon (kg/m2)
+
+Vulnerable labile organic carbon is defined here as the carbon that would be lost due to trawling a grid cell once completely and evenly over the full depth of the surface layer (SVR = 1).
+
+```{r vulnerable_loc}
+svr <- 1
+locs_sf_vuln_mean <- locs_sf_undist - (DBD_sf * (1 + dbd_sf_effect_mean) * TOC_sf * (1 - CRI) * (1 + phaeo_sf_effect_mean) * 0.02 * svr)
+locs_sf_vuln_high <- locs_sf_undist - (DBD_sf * (1 + dbd_sf_effect_lower) * TOC_sf * (1 - CRI) * (1 + phaeo_sf_effect_lower) * 0.02 * svr)
+locs_sf_vuln_low <- locs_sf_undist - (DBD_sf * (1 + dbd_sf_effect_upper) * TOC_sf * (1 - CRI) * (1 + phaeo_sf_effect_upper) * 0.02 * svr)
+
+plot(locs_sf_vuln_mean)
+plot(locs_sf_vuln_low)
+plot(locs_sf_vuln_high)
+```
+
+
+## Based on meta-regression with surface primary productivity
+
+### Surface primary productivity data (g m-3 d-1)
+
+Data from Bio-ORACLE v2.2
+
+```{r surface_pp}
+PP <- rast(here("analysis", "data", "raw", "Present.Surface.Primary.productivity.Mean.tif"))
+PP <- project(PP, locs_sf_undist)
+plot(PP)
+```
+
+
+### Meta-regression
+
+Data are taken from Tiano et al. (2024)[https://doi.org/10.1111/faf.12855] Table S8.
+
+```{r meta-regression}
+lnRR_phaeo_sf <- -7.953 * PP -0.223
+phaeo_sf_effect_regr <- exp(lnRR_phaeo_sf)-1
+plot(phaeo_sf_effect_regr)
+```
+
+
+### Calculate vulnerable labile organic carbon from meta-regression
+
+```{r vulnerable_loc_regr}
+locs_sf_vuln_regr <- locs_sf_undist - (DBD_sf * (1 + dbd_sf_effect_mean) * TOC_sf * (1 - CRI) * (1 + phaeo_sf_effect_regr) * 0.02 * svr)
+
+plot(locs_sf_vuln_regr)
+```
+
+
+## Calculate vulnerable labile organic carbon pools (Tg)
+
+```{r calculate_vulnerable_loc_pools}
+locp_sf_vuln_mean <- as.numeric(global(locs_sf_vuln_mean, sum, na.rm = TRUE)*A/1000000000)
+locp_sf_vuln_low <- as.numeric(global(locs_sf_vuln_low, sum, na.rm = TRUE)*A/1000000000)
+locp_sf_vuln_high <- as.numeric(global(locs_sf_vuln_high, sum, na.rm = TRUE)*A/1000000000)
+locp_sf_vuln_regr <- as.numeric(global(locs_sf_vuln_regr, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+# Output raster
+
+```{r write_raster}
+writeRaster(locs_sf, here("analysis", "data", "final", "LOC_stock_sf.tif"), overwrite = TRUE)
+writeRaster(locs_sf_dist, here("analysis", "data", "final", "LOC_stock_sf_disturbed.tif"), overwrite = TRUE)
+writeRaster(locs_sf_undist, here("analysis", "data", "final", "LOC_stock_sf_undisturbed.tif"), overwrite = TRUE)
+writeRaster(locs_sf_vuln_mean, here("analysis", "data", "final", "LOC_stock_sf_vulnerable_mean.tif"), overwrite = TRUE)
+writeRaster(locs_sf_vuln_low, here("analysis", "data", "final", "LOC_stock_sf_vulnerable_low.tif"), overwrite = TRUE)
+writeRaster(locs_sf_vuln_high, here("analysis", "data", "final", "LOC_stock_sf_vulnerable_high.tif"), overwrite = TRUE)
+writeRaster(locs_sf_vuln_regr, here("analysis", "data", "final", "LOC_stock_sf_vulnerable_regr.tif"), overwrite = TRUE)
+```
+
+
+
