@@ -210,7 +210,7 @@ $OCSpd = \rho_G(1+RR_\rho)*(d+\delta d)$
 Analysis as in Tiano et al. (2024)[https://doi.org/10.1111/faf.12855] but restricted to surface layer and acute impacts (first week after fishing event). Organic carbon content and dry bulk density are related to each other, although the exact form of the relationship is site-dependent. Both variables do not vary independently from each other. Therefore, only studies that report TOC content and either dry bulk density, porosity or absolute water content are considered. The latter two are included as dry bulk density can be calculated from porosity and water content (Flemming & Delafontaine, 2000)[https://doi.org/10.1016/S0278-4343(00)00018-2] with a high degree of accuracy. Estimates are reported as log response ratio (lnRR).
 
 ```{r meta-analysis_results}
-effect_size <- read.csv(here("analysis", "data", "raw", "Table1", "OCdens_surface_layer_acute.csv"))
+effect_size <- read.csv(here("analysis", "data", "raw", "Table1", "OC_density_sf_acute.csv"))
 effect_size
 ```
 
