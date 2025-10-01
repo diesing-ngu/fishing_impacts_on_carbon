@@ -210,7 +210,7 @@ $OCSpd = \rho_G(1+RR_\rho)*(d+\delta d)$
 Analysis as in Tiano et al. (2024)[https://doi.org/10.1111/faf.12855] but restricted to surface layer and acute impacts (first week after fishing event). Organic carbon content and dry bulk density are related to each other, although the exact form of the relationship is site-dependent. Both variables do not vary independently from each other. Therefore, only studies that report TOC content and either dry bulk density, porosity or absolute water content are considered. The latter two are included as dry bulk density can be calculated from porosity and water content (Flemming & Delafontaine, 2000)[https://doi.org/10.1016/S0278-4343(00)00018-2] with a high degree of accuracy. Estimates are reported as log response ratio (lnRR).
 
 ```{r meta-analysis_results}
-effect_size <- read.csv(here("analysis", "data", "raw", "Table1", "OC_density_sf_acute.csv"))
+effect_size <- read.csv(here("analysis", "data", "raw", "Table1", "OCdens_surface_layer_acute.csv"))
 effect_size
 ```
 
@@ -223,8 +223,8 @@ $RR = (e^{lnRR}-1)$
 
 ```{r effect_size}
 ocdens_sf_effect_mean <- exp(effect_size[3,2])-1
-ocdens_sf_effect_lower <- exp(effect_size[3,5])-1
-ocdens_sf_effect_upper <- exp(effect_size[3,6])-1
+ocdens_sf_effect_lower_bound <- exp(effect_size[3,5])-1
+ocdens_sf_effect_upper_bound <- exp(effect_size[3,6])-1
 ```
 
 
@@ -240,10 +240,12 @@ Based on empirical relationships with silt-clay (mud) content (weight-%) as in O
 
 ### Get mud content data
 
+Predicted mud is loaded as a dimensionless fraction and needs to be multiplied by 100.
+
 ```{r mud}
 download.file(url = "https://zenodo.org/records/10057207/files/MudContent_output.zip", destfile = here("analysis", "data", "raw", "Mud.zip"))
 unzip(zipfile = here("analysis", "data", "raw", "Mud.zip"), files = "mud_2023-06-30.tif", exdir = here("analysis", "data", "raw"))
-mud <- rast(here("analysis", "data", "raw", "mud_2023-06-30.tif"))
+mud <- rast(here("analysis", "data", "raw", "mud_2023-06-30.tif")) *100
 file.remove(here("analysis", "data", "raw", "Mud.zip"))
 ```
 
@@ -252,8 +254,8 @@ file.remove(here("analysis", "data", "raw", "Mud.zip"))
 
 ```{r resuspended_sediment}
 m_mean <- 37.31  * mud + 425.37
-m_lower <- 13.45 * mud + 170.96
-m_upper <- 61.69 * mud + 870.04
+m_lower_limit <- 13.45 * mud + 170.96
+m_upper_limit <- 61.69 * mud + 870.04
 ```
 
 
@@ -265,8 +267,8 @@ The proportion of the sediment that resettles after resuspension $Pcrd$ was take
 Pcrd <- 0.87
 
 delta_d_mean <- -1 * m_mean/1000 * (1-Pcrd) / DBD_sf
-delta_d_lower <- -1 * m_lower/1000 * (1-Pcrd) / DBD_sf
-delta_d_upper <- -1 * m_upper/1000 * (1-Pcrd) / DBD_sf
+delta_d_lower_limit <- -1 * m_lower_limit/1000 * (1-Pcrd) / DBD_sf
+delta_d_upper_limit <- -1 * m_upper_limit/1000 * (1-Pcrd) / DBD_sf
 ```
 
 
@@ -274,24 +276,59 @@ delta_d_upper <- -1 * m_upper/1000 * (1-Pcrd) / DBD_sf
 
 ```{r post_disturbance_stock}
 ocs_sf_pd_mean <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_mean) * (0.02 + delta_d_mean)
-ocs_sf_pd_lower <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_lower) * (0.02 + delta_d_lower)
-ocs_sf_pd_upper <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_upper) * (0.02 + delta_d_upper)
+ocs_sf_pd_low <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_upper_bound) * (0.02 + delta_d_lower_limit)
+ocs_sf_pd_high <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_lower_bound) * (0.02 + delta_d_upper_limit)
 ```
 
+
+## Calculate the organic carbon stock post disturbance (thickness changes only)
+
+```{r thickness_changes_only}
+ocs_sf_th_mean <- TOC_sf * DBD_sf * (0.02 + delta_d_mean)
+ocs_sf_th_low <- TOC_sf * DBD_sf * (0.02 + delta_d_lower_limit)
+ocs_sf_th_high <- TOC_sf * DBD_sf * (0.02 + delta_d_upper_limit)
+```
+
+
+## Calculate the organic carbon stock post disturbance (OC density changes only)
+
+```{r OC_dens_changes_only}
+ocs_sf_od_mean <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_mean) * 0.02
+ocs_sf_od_low <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_upper_bound) * 0.02
+ocs_sf_od_high <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_lower_bound) * 0.02
+```
 
 
 ## Calculate vulnerable organic carbon (kg/m2)
 
-Vulnerable organic carbon is defined here as the organic carbon that would be lost due to trawling a grid cell once completely and evenly over the full depth of the surface layer (SVR = 1).
+Vulnerable organic carbon is defined here as the organic carbon that would be lost due to trawling a grid cell once completely and evenly over the full depth of the surface layer (SVR = 1/yr).
 
 ```{r vulnerable_oc}
 ocs_sf_vuln_mean <- ocs_sf_undist - ocs_sf_pd_mean
-ocs_sf_vuln_high <- ocs_sf_undist - ocs_sf_pd_lower
-ocs_sf_vuln_low <- ocs_sf_undist - ocs_sf_pd_upper
+ocs_sf_vuln_high <- ocs_sf_undist - ocs_sf_pd_high
+ocs_sf_vuln_low <- ocs_sf_undist - ocs_sf_pd_low
 
 plot(ocs_sf_vuln_mean)
 plot(ocs_sf_vuln_low)
 plot(ocs_sf_vuln_high)
+```
+
+
+## Calculate vulnerable organic carbon (kg/m2) due to thickness changes only
+
+```{r vulnerable_OC_thickness_only}
+ocs_sf_vuln_th_mean <- ocs_sf_undist - ocs_sf_th_mean
+ocs_sf_vuln_th_high <- ocs_sf_undist - ocs_sf_th_high
+ocs_sf_vuln_th_low <- ocs_sf_undist - ocs_sf_th_low
+```
+
+
+## Calculate vulnerable organic carbon (kg/m2) due to organic carbon density changes only
+
+```{r vulnerable_OC_density_only}
+ocs_sf_vuln_od_mean <- ocs_sf_undist - ocs_sf_od_mean
+ocs_sf_vuln_od_high <- ocs_sf_undist - ocs_sf_od_high
+ocs_sf_vuln_od_low <- ocs_sf_undist - ocs_sf_od_low
 ```
 
 
@@ -301,6 +338,28 @@ plot(ocs_sf_vuln_high)
 ocp_sf_vuln_mean <- as.numeric(global(ocs_sf_vuln_mean, sum, na.rm = TRUE)*A/1000000000)
 ocp_sf_vuln_low <- as.numeric(global(ocs_sf_vuln_low, sum, na.rm = TRUE)*A/1000000000)
 ocp_sf_vuln_high <- as.numeric(global(ocs_sf_vuln_high, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+## Calculate vulnerable organic carbon pools (Tg) due to thickness changes only
+
+```{r calculate_vulnerable_oc_pools_thickness_only}
+ocp_sf_vuln_th_mean <- as.numeric(global(ocs_sf_vuln_th_mean, sum, na.rm = TRUE)*A/1000000000)
+ocp_sf_vuln_th_low <- as.numeric(global(ocs_sf_vuln_th_low, sum, na.rm = TRUE)*A/1000000000)
+ocp_sf_vuln_th_high <- as.numeric(global(ocs_sf_vuln_th_high, sum, na.rm = TRUE)*A/1000000000)
+```
+
+
+## Calculate vulnerable organic carbon pools (Tg) due to organic carbon density changes only
+
+```{r calculate_vulnerable_oc_pools_OC_density_only}
+ocp_sf_vuln_od_mean <- as.numeric(global(ocs_sf_vuln_od_mean, sum, na.rm = TRUE)*A/1000000000)
+ocp_sf_vuln_od_low <- as.numeric(global(ocs_sf_vuln_od_low, sum, na.rm = TRUE)*A/1000000000)
+ocp_sf_vuln_od_high <- as.numeric(global(ocs_sf_vuln_od_high, sum, na.rm = TRUE)*A/1000000000)
+
+ocp_sf_vuln_od_mean + ocp_sf_vuln_th_mean
+ocp_sf_vuln_od_low + ocp_sf_vuln_th_low
+ocp_sf_vuln_od_high + ocp_sf_vuln_th_high
 ```
 
 
