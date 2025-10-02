@@ -114,7 +114,7 @@ SVR_sf_pr <- project(SVR_sf, TOC_sf)
 
 ## Fished areas
 
-Create a mask of fished areas, i.e., all grid cells that have a SVR > 0. This mask is for display purposes and won't be used in the analysis.
+Create a mask of fished areas, i.e., all grid cells that have a SVR > 0/yr. This mask is for display purposes and won't be used in the analysis.
 
 ```{r fished_areas}
 fished <- SVR_sf
@@ -261,10 +261,11 @@ m_upper_limit <- 61.69 * mud + 870.04
 
 ### Calculate sediment thickness changes
 
-The proportion of the sediment that resettles after resuspension $Pcrd$ was taken from Sala et al. (2021).
+The proportion of the sediment that resettles after resuspension $Pcrd$ was taken from Sala et al. (2021). By setting $Pcrd = 1$ (all resuspended sediment resettles), $\delta d$ becomes 0 and the mass of vulnerable organic carbon due to changes in organic carbon density ($\delta \rho_G$) can be estimated separately.
 
 ```{r thickness_change}
 Pcrd <- 0.87
+#Pcrd <- 1 #When the effect of changes in organic carbon density should be considered only.
 
 delta_d_mean <- -1 * m_mean/1000 * (1-Pcrd) / DBD_sf
 delta_d_lower_limit <- -1 * m_lower_limit/1000 * (1-Pcrd) / DBD_sf
@@ -278,24 +279,6 @@ delta_d_upper_limit <- -1 * m_upper_limit/1000 * (1-Pcrd) / DBD_sf
 ocs_sf_pd_mean <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_mean) * (0.02 + delta_d_mean)
 ocs_sf_pd_low <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_upper_bound) * (0.02 + delta_d_lower_limit)
 ocs_sf_pd_high <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_lower_bound) * (0.02 + delta_d_upper_limit)
-```
-
-
-## Calculate the organic carbon stock post disturbance (thickness changes only)
-
-```{r thickness_changes_only}
-ocs_sf_th_mean <- TOC_sf * DBD_sf * (0.02 + delta_d_mean)
-ocs_sf_th_low <- TOC_sf * DBD_sf * (0.02 + delta_d_lower_limit)
-ocs_sf_th_high <- TOC_sf * DBD_sf * (0.02 + delta_d_upper_limit)
-```
-
-
-## Calculate the organic carbon stock post disturbance (OC density changes only)
-
-```{r OC_dens_changes_only}
-ocs_sf_od_mean <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_mean) * 0.02
-ocs_sf_od_low <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_upper_bound) * 0.02
-ocs_sf_od_high <- TOC_sf * DBD_sf * (1 + ocdens_sf_effect_lower_bound) * 0.02
 ```
 
 
@@ -314,52 +297,12 @@ plot(ocs_sf_vuln_high)
 ```
 
 
-## Calculate vulnerable organic carbon (kg/m2) due to thickness changes only
-
-```{r vulnerable_OC_thickness_only}
-ocs_sf_vuln_th_mean <- ocs_sf_undist - ocs_sf_th_mean
-ocs_sf_vuln_th_high <- ocs_sf_undist - ocs_sf_th_high
-ocs_sf_vuln_th_low <- ocs_sf_undist - ocs_sf_th_low
-```
-
-
-## Calculate vulnerable organic carbon (kg/m2) due to organic carbon density changes only
-
-```{r vulnerable_OC_density_only}
-ocs_sf_vuln_od_mean <- ocs_sf_undist - ocs_sf_od_mean
-ocs_sf_vuln_od_high <- ocs_sf_undist - ocs_sf_od_high
-ocs_sf_vuln_od_low <- ocs_sf_undist - ocs_sf_od_low
-```
-
-
 ## Calculate vulnerable organic carbon pools (Tg)
 
 ```{r calculate_vulnerable_oc_pools}
 ocp_sf_vuln_mean <- as.numeric(global(ocs_sf_vuln_mean, sum, na.rm = TRUE)*A/1000000000)
 ocp_sf_vuln_low <- as.numeric(global(ocs_sf_vuln_low, sum, na.rm = TRUE)*A/1000000000)
 ocp_sf_vuln_high <- as.numeric(global(ocs_sf_vuln_high, sum, na.rm = TRUE)*A/1000000000)
-```
-
-
-## Calculate vulnerable organic carbon pools (Tg) due to thickness changes only
-
-```{r calculate_vulnerable_oc_pools_thickness_only}
-ocp_sf_vuln_th_mean <- as.numeric(global(ocs_sf_vuln_th_mean, sum, na.rm = TRUE)*A/1000000000)
-ocp_sf_vuln_th_low <- as.numeric(global(ocs_sf_vuln_th_low, sum, na.rm = TRUE)*A/1000000000)
-ocp_sf_vuln_th_high <- as.numeric(global(ocs_sf_vuln_th_high, sum, na.rm = TRUE)*A/1000000000)
-```
-
-
-## Calculate vulnerable organic carbon pools (Tg) due to organic carbon density changes only
-
-```{r calculate_vulnerable_oc_pools_OC_density_only}
-ocp_sf_vuln_od_mean <- as.numeric(global(ocs_sf_vuln_od_mean, sum, na.rm = TRUE)*A/1000000000)
-ocp_sf_vuln_od_low <- as.numeric(global(ocs_sf_vuln_od_low, sum, na.rm = TRUE)*A/1000000000)
-ocp_sf_vuln_od_high <- as.numeric(global(ocs_sf_vuln_od_high, sum, na.rm = TRUE)*A/1000000000)
-
-ocp_sf_vuln_od_mean + ocp_sf_vuln_th_mean
-ocp_sf_vuln_od_low + ocp_sf_vuln_th_low
-ocp_sf_vuln_od_high + ocp_sf_vuln_th_high
 ```
 
 
